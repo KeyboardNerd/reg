@@ -22,47 +22,129 @@ import (
 	"github.com/coreos/clair/pkg/pagination"
 )
 
-// Processors are extentions to scan a layer's content.
-type Processors struct {
-	Listers   []string
-	Detectors []string
-}
-
 // Ancestry is a manifest that keeps all layers in an image in order.
 type Ancestry struct {
+	// Name is a globally unique value for a set of layers. This is often the
+	// sha256 digest of an OCI/Docker manifest.
 	Name string
-	// ProcessedBy contains the processors that are used when computing the
+	// By contains the processors that are used when computing the
 	// content of this ancestry.
-	ProcessedBy Processors
+	By []Detector
 	// Layers should be ordered and i_th layer is the parent of i+1_th layer in
 	// the slice.
 	Layers []AncestryLayer
 }
 
+// Valid checks if the ancestry is compliant to spec.
+func (a *Ancestry) Valid() bool {
+	if a == nil {
+		return false
+	}
+
+	if a.Name == "" {
+		return false
+	}
+
+	for _, d := range a.By {
+		if !d.Valid() {
+			return false
+		}
+	}
+
+	for _, l := range a.Layers {
+		if !l.Valid() {
+			return false
+		}
+	}
+
+	return true
+}
+
 // AncestryLayer is a layer with all detected namespaced features.
 type AncestryLayer struct {
-	LayerMetadata
-
-	// DetectedFeatures are the features introduced by this layer when it was
-	// processed.
-	DetectedFeatures []NamespacedFeature
-}
-
-// LayerMetadata contains the metadata of a layer.
-type LayerMetadata struct {
-	// Hash is content hash of the layer.
+	// Hash is the sha-256 tarsum on the layer's blob content.
 	Hash string
-	// ProcessedBy contains the processors that processed this layer.
-	ProcessedBy Processors
+	// Features are the features introduced by this layer when it was
+	// processed.
+	Features []AncestryFeature
 }
 
-// Layer is a layer with its detected namespaces and features by
-// ProcessedBy.
-type Layer struct {
-	LayerMetadata
+// Valid checks if the Ancestry Layer is compliant to the spec.
+func (l *AncestryLayer) Valid() bool {
+	if l == nil {
+		return false
+	}
 
-	Namespaces []Namespace
-	Features   []Feature
+	if l.Hash == "" {
+		return false
+	}
+
+	return true
+}
+
+// GetFeatures returns the Ancestry's features.
+func (l *AncestryLayer) GetFeatures() []NamespacedFeature {
+	nsf := make([]NamespacedFeature, 0, len(l.Features))
+	for _, f := range l.Features {
+		nsf = append(nsf, f.NamespacedFeature)
+	}
+
+	return nsf
+}
+
+// AncestryFeature is a namespaced feature with the detectors used to
+// find this feature.
+type AncestryFeature struct {
+	NamespacedFeature
+
+	// FeatureBy is the detector that detected the feature.
+	FeatureBy Detector
+	// NamespaceBy is the detector that detected the namespace.
+	NamespaceBy Detector
+}
+
+// Layer is a layer with all the detected features and namespaces.
+type Layer struct {
+	// Hash is the sha-256 tarsum on the layer's blob content.
+	Hash string
+	// By contains a list of detectors scanned this Layer.
+	By         []Detector
+	Namespaces []LayerNamespace
+	Features   []LayerFeature
+}
+
+func (l *Layer) GetFeatures() []Feature {
+	features := make([]Feature, 0, len(l.Features))
+	for _, f := range l.Features {
+		features = append(features, f.Feature)
+	}
+
+	return features
+}
+
+func (l *Layer) GetNamespaces() []Namespace {
+	namespaces := make([]Namespace, 0, len(l.Namespaces))
+	for _, ns := range l.Namespaces {
+		namespaces = append(namespaces, ns.Namespace)
+	}
+
+	return namespaces
+}
+
+// LayerNamespace is a namespace with detection information.
+type LayerNamespace struct {
+	Namespace
+
+	// By is the detector found the namespace.
+	By Detector
+}
+
+// LayerFeature is a feature with detection information.
+type LayerFeature struct {
+	Feature
+
+	// By is the detector found the feature.
+	By Detector
 }
 
 // Namespace is the contextual information around features.
@@ -73,16 +155,33 @@ type Namespace struct {
 	VersionFormat string
 }
 
+func NewNamespace(name string, versionFormat string) *Namespace {
+	return &Namespace{name, versionFormat}
+}
+
 // Feature represents a package detected in a layer but the namespace is not
 // determined.
 //
-// e.g. Name: OpenSSL, Version: 1.0, VersionFormat: dpkg.
+// e.g. Name: Libssl1.0, Version: 1.0, VersionFormat: dpkg, Type: binary
 // dpkg is the version format of the installer package manager, which in this
 // case could be dpkg or apk.
 type Feature struct {
 	Name          string
 	Version       string
 	VersionFormat string
+	Type          FeatureType
+}
+
+func NewFeature(name string, version string, versionFormat string, featureType FeatureType) *Feature {
+	return &Feature{name, version, versionFormat, featureType}
+}
+
+func NewBinaryPackage(name string, version string, versionFormat string) *Feature {
+	return &Feature{name, version, versionFormat, BinaryPackage}
+}
+
+func NewSourcePackage(name string, version string, versionFormat string) *Feature {
+	return &Feature{name, version, versionFormat, SourcePackage}
 }
 
 // NamespacedFeature is a feature with determined namespace and can be affected
@@ -93,6 +192,11 @@ type NamespacedFeature struct {
 	Feature
 
 	Namespace Namespace
+}
+
+func NewNamespacedFeature(namespace *Namespace, feature *Feature) *NamespacedFeature {
+	// TODO: namespaced feature should use pointer values
+	return &NamespacedFeature{*feature, *namespace}
 }
 
 // AffectedNamespacedFeature is a namespaced feature affected by the
@@ -115,6 +219,8 @@ type VulnerabilityWithFixedIn struct {
 // by a Vulnerability. Namespace and Feature Name is unique. Affected Feature is
 // bound to vulnerability.
 type AffectedFeature struct {
+	// FeatureType determines which type of package it affects.
+	FeatureType FeatureType
 	Namespace   Namespace
 	FeatureName string
 	// FixedInVersion is known next feature version that's not affected by the
@@ -145,7 +251,7 @@ type Vulnerability struct {
 	Metadata MetadataMap
 }
 
-// VulnerabilityWithAffected is an vulnerability with all known affected
+// VulnerabilityWithAffected is a vulnerability with all known affected
 // features.
 type VulnerabilityWithAffected struct {
 	Vulnerability

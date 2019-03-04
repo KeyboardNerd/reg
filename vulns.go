@@ -74,17 +74,17 @@ func (cmd *vulnsCommand) Run(ctx context.Context, args []string) error {
 	}
 
 	// Iterate over the vulnerabilities by severity list.
-	for sev, vulns := range report.VulnsBySeverity {
-		for _, v := range vulns {
-			if sev == "Fixable" {
-				fmt.Printf("%s: [%s] \n%s\n%s\n", v.Name, v.Severity+" - Fixable", v.Description, v.Link)
-				fmt.Printf("Fixed by: %s\n", v.FixedBy)
-			} else {
-				fmt.Printf("%s: [%s] \n%s\n%s\n", v.Name, v.Severity, v.Description, v.Link)
-			}
-			fmt.Println("-----------------------------------------")
-		}
-	}
+	// for sev, vulns := range report.VulnsBySeverity {
+	// 	for _, v := range vulns {
+	// 		if sev == "Fixable" {
+	// 			fmt.Printf("%s: [%s] \n%s\n%s\n", v.Name, v.Severity+" - Fixable", v.Description, v.Link)
+	// 			fmt.Printf("Fixed by: %s\n", v.FixedBy)
+	// 		} else {
+	// 			fmt.Printf("%s: [%s] \n%s\n%s\n", v.Name, v.Severity, v.Description, v.Link)
+	// 		}
+	// 		fmt.Println("-----------------------------------------")
+	// 	}
+	// }
 
 	// Print summary and count.
 	for sev, vulns := range report.VulnsBySeverity {

@@ -1,16 +1,17 @@
 package registry
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/docker/distribution/manifest/manifestlist"
 	"github.com/docker/distribution/manifest/schema2"
 	"github.com/docker/docker/api/types"
 )
@@ -130,7 +131,7 @@ func (r *Registry) getJSON(url string, response interface{}, addV2Header bool) (
 		return nil, err
 	}
 	if addV2Header {
-		req.Header.Add("Accept", fmt.Sprintf("%s,%s;q=0.9", schema2.MediaTypeManifest, manifestlist.MediaTypeManifestList))
+		req.Header.Add("Accept", schema2.MediaTypeManifest)
 	}
 	resp, err := r.Client.Do(req)
 	if err != nil {
@@ -139,7 +140,14 @@ func (r *Registry) getJSON(url string, response interface{}, addV2Header bool) (
 	defer resp.Body.Close()
 	r.Logf("registry.registry resp.Status=%s", resp.Status)
 
-	if err := json.NewDecoder(resp.Body).Decode(response); err != nil {
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(string(b))
+	reader := bytes.NewReader(b)
+	if err := json.NewDecoder(reader).Decode(response); err != nil {
 		return nil, err
 	}
 

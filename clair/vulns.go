@@ -1,7 +1,6 @@
 package clair
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -9,7 +8,7 @@ import (
 	"github.com/genuinetools/reg/registry"
 )
 
-// Vulnerabilities scans the given repo and tag.
+// Vulnerabilities scans the given repo and tag using Clair V1 API.
 func (c *Clair) Vulnerabilities(r *registry.Registry, repo, tag string) (VulnerabilityReport, error) {
 	report := VulnerabilityReport{
 		RegistryURL:     r.Domain,
@@ -85,6 +84,7 @@ func (c *Clair) VulnerabilitiesV3(r *registry.Registry, repo, tag string) (Vulne
 		VulnsBySeverity: make(map[string][]Vulnerability),
 	}
 
+	fmt.Printf("Using V3 API %s:%s", repo, tag)
 	layers, err := c.getLayers(r, repo, tag, false)
 	if err != nil {
 		return report, fmt.Errorf("getting filtered layers failed: %v", err)
@@ -95,8 +95,8 @@ func (c *Clair) VulnerabilitiesV3(r *registry.Registry, repo, tag string) (Vulne
 		return report, nil
 	}
 
+	fmt.Printf("V3 API: found %d layers\n", len(layers))
 	report.Name = layers[0].Digest.String()
-
 	clairLayers := []*clairpb.PostAncestryRequest_PostLayer{}
 	for i := len(layers) - 1; i >= 0; i-- {
 		// Form the clair layer.
@@ -111,23 +111,26 @@ func (c *Clair) VulnerabilitiesV3(r *registry.Registry, repo, tag string) (Vulne
 
 	// Post the ancestry.
 	if err := c.PostAncestry(layers[0].Digest.String(), clairLayers); err != nil {
-		return report, fmt.Errorf("posting ancestry failed: %v", err)
+		panic(err)
 	}
 
+	fmt.Printf("Ancestry Digest=%s\n", layers[0].Digest.String())
 	// Get the ancestry.
 	vl, err := c.GetAncestry(layers[0].Digest.String())
 	if err != nil {
-		return report, err
+		panic(err)
 	}
 
 	if vl == nil {
-		return report, errors.New("ancestry response was nil")
+		panic(err)
 	}
 
-	// Get the vulns.
 	for _, l := range vl.GetLayers() {
+		fmt.Printf("layer=%s\n", l.GetLayer().Hash)
 		for _, f := range l.GetDetectedFeatures() {
+			fmt.Printf("-> %s/%s/%s:%s(%s)\n", f.GetFeatureType(), f.GetNamespace().GetName(), f.GetName(), f.GetVersion(), f.GetVersionFormat())
 			for _, v := range f.GetVulnerabilities() {
+				fmt.Printf(" -> vuln = %s, fixedby=%s\n", v.GetName(), v.GetFixedBy())
 				report.Vulns = append(report.Vulns, Vulnerability{
 					Name:          v.Name,
 					NamespaceName: v.NamespaceName,
